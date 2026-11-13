@@ -1,0 +1,12 @@
+# This project's settings for c42 (`c42 init`); commit this file, nothing personal is
+# in it. What each one means: c42 config --explain
+name = "jaxtari-blines"
+task_name = "jaxtari-blines"
+cluster_dir = "jaxtari-blines"
+repository = "git@github.com:VanillaWhey/jaxtari-blines.git"
+image = "helffml/prolog42"
+install = "uv sync --frozen"
+private_output = true
+environment = ["JAXTARI_SKIP_SPRITE_UPDATE=1"]
+mounts = []
+task_file = ""

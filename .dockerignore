@@ -1,0 +1,9 @@
+# outputs and local environments; .git stays in (runs log the blines commit)
+.venv
+**/__pycache__
+*.py[oc]
+models/
+outputs/
+logs/
+wandb/
+.idea/

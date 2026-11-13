@@ -18,8 +18,10 @@ dependencies = [
 viper = ["scikit-learn"]
 
 [tool.uv.sources]
-# local checkout (../JAXtari, kept on dev); editable so runs always use its current HEAD
-jaxtari = { path = "../JAXtari", editable = true }
+# cluster runs (c42): JAXtari from git at a fixed commit of dev, pinned in uv.lock, so the
+# cluster installs it with uv sync instead of needing a ../JAXtari checkout next to the project.
+# Local development: jaxtari = { path = "../JAXtari", editable = true }
+jaxtari = { git = "https://github.com/k4ntz/JAXtari.git", rev = "ae1d7a0a2146f09bd6bdbb1bebf21ce4f3e9dd94" }
 
 [tool.uv]
 override-dependencies = [

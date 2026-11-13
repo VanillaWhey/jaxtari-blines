@@ -14,6 +14,8 @@ def main(config):
     starting_seed = merged_config.get("SEED", 0)
 
     alg = merged_config["ALG"]
+    if (merged_config.get("ORBIT", False) or merged_config.get("ORCA", False)) and alg not in ("PPO", "PQN"):
+        raise ValueError(f"ORCA/ORBIT are only implemented for PPO and PQN, not {alg}")
 
     all_metrics = []
     for seed in range(n_seeds):

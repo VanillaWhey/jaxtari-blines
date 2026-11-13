@@ -28,10 +28,11 @@ from agents.pqn.pqn_eval import evaluate
 from agents.run_utils import eval_mod_configs, log_model_artifact, plan_chunks, rm_metrics
 from agents.networks import impala_cnn
 from agents.occam.occam import OCCAMWrapper, log_occam_comparison_video
+from agents.orbit.orbit import ORBiTQNetwork, init_orbit, orbit_model_kwargs, orca_run_suffix, orca_settings, uses_orbit, wrap_orca
 from reward_machines.rm_registry import rm_run_suffix, rm_settings, wrap_reward_machine
 
 
-def make_env(env_id, mods=None, pixel_based=True, native_downscaling=True, eval=False, occam_mask=None, reward_machine=None):
+def make_env(env_id, mods=None, pixel_based=True, native_downscaling=True, eval=False, occam_mask=None, reward_machine=None, orca=None):
     mods = list(mods) if mods else None
     if not eval and mods:
         print(f"[WARNING] Training on mods {mods}!")
@@ -62,6 +63,9 @@ def make_env(env_id, mods=None, pixel_based=True, native_downscaling=True, eval=
                 max_pooling=True,
                 clip_reward=not eval,
             )
+        elif orca is not None:
+            # ORCA: anchor-relative object matrix (raw for ORBiT, normalised and flattened for the MLP)
+            env = wrap_orca(env, orca, eval=eval)
         else:
             env = FlattenObservationWrapper(
                 NormalizeObservationWrapper(
@@ -136,7 +140,7 @@ def single_run(config: dict):
     config = {k.upper(): v for k, v in config.items() if k != "alg"}
     env_id = config["ENV_ID"]
     pixel_based = config["PIXEL_BASED"]
-    run_name = f"{env_id}_{config['EXP_NAME']}_{'oc' + rm_run_suffix(config) if not pixel_based else 'pixel' + ('_occam-' + config['OCCAM_MASK'] if config.get('OCCAM_MASK') else '') + ('_impala' if config.get('CNN_TYPE', 'nature') == 'impala' else '')}_{config['SEED']}"
+    run_name = f"{env_id}_{config['EXP_NAME']}_{'oc' + orca_run_suffix(config) + rm_run_suffix(config) if not pixel_based else 'pixel' + ('_occam-' + config['OCCAM_MASK'] if config.get('OCCAM_MASK') else '') + ('_impala' if config.get('CNN_TYPE', 'nature') == 'impala' else '')}_{config['SEED']}"
 
     wandb.init(
         project=config.get("PROJECT", "jaxtari-blines"),
@@ -167,7 +171,8 @@ def single_run(config: dict):
     learning_rate = config.get("LEARNING_RATE", 2.5e-4)
     anneal_lr = config.get("ANNEAL_LR", True)
 
-    env = make_env(env_id, list(config.get("TRAIN_MODS") or []), pixel_based, config.get("NATIVE_DOWNSCALING", True), occam_mask=config.get("OCCAM_MASK") if config["PIXEL_BASED"] else None, reward_machine=rm_settings(config))()
+    orca = orca_settings(config)
+    env = make_env(env_id, list(config.get("TRAIN_MODS") or []), pixel_based, config.get("NATIVE_DOWNSCALING", True), occam_mask=config.get("OCCAM_MASK") if config["PIXEL_BASED"] else None, reward_machine=rm_settings(config), orca=orca)()
     action_dim = env.action_space().n
     obs_shape = env.observation_space().shape
     if pixel_based:
@@ -177,7 +182,13 @@ def single_run(config: dict):
     minibatch_size = batch_size // num_minibatches
     scan_steps, num_chunks, steps_per_chunk = plan_chunks(total_timesteps, batch_size, config.get("SCAN_STEPS", 1000))
 
-    network = QNetwork(action_dim=action_dim, cnn_type=config.get("CNN_TYPE", "nature")) if pixel_based else MLP_QNetwork(action_dim=action_dim)
+    if uses_orbit(orca):
+        Model = partial(ORBiTQNetwork, num_object_types=env.num_object_types, **orbit_model_kwargs(config))
+    elif pixel_based:
+        Model = partial(QNetwork, cnn_type=config.get("CNN_TYPE", "nature"))
+    else:
+        Model = MLP_QNetwork
+    network = Model(action_dim=action_dim)
     total_grad_steps = scan_steps * num_chunks * update_epochs * num_minibatches
     lr = optax.linear_schedule(learning_rate, 0.0, total_grad_steps) if anneal_lr else learning_rate
     tx = optax.chain(optax.clip_by_global_norm(max_grad_norm), optax.radam(lr))
@@ -192,9 +203,10 @@ def single_run(config: dict):
         return obs.reshape(num_envs, *obs_shape), state, reward, done, info
 
     key, q_key = jax.random.split(key, 2)
+    sample_obs = jnp.zeros((1, *obs_shape))
     q_state = TrainState.create(
         apply_fn=network.apply,
-        params=network.init(q_key, jnp.zeros((1, *obs_shape))),
+        params=init_orbit(network, q_key, sample_obs) if uses_orbit(orca) else network.init(q_key, sample_obs),
         tx=tx,
     )
     obs, env_state = reset_envs(jax.random.split(key, num_envs))
@@ -314,10 +326,11 @@ def single_run(config: dict):
                     eval=True,
                     occam_mask=config.get("OCCAM_MASK") if config["PIXEL_BASED"] else None,
                     reward_machine=rm_settings(config),
+                    orca=orca,
                 ),
                 env_id,
                 eval_episodes=10,
-                Model=partial(QNetwork, cnn_type=config.get("CNN_TYPE", "nature")) if pixel_based else MLP_QNetwork,
+                Model=Model,
                 seed=config["SEED"] + 42,  # use a different seed for evaluation
             )
             metrics[mod_label] = float(np.mean(jax.device_get(episodic_returns)))

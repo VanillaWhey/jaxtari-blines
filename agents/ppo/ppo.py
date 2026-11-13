@@ -21,10 +21,11 @@ from agents.ppo.ppo_eval import evaluate
 from agents.run_utils import eval_mod_configs, log_model_artifact, plan_chunks, rm_metrics
 from agents.networks import impala_cnn
 from agents.occam.occam import OCCAMWrapper, log_occam_comparison_video
+from agents.orbit.orbit import ORBiTNetwork, init_orbit, orbit_model_kwargs, orca_run_suffix, orca_settings, uses_orbit, wrap_orca
 from reward_machines.rm_registry import rm_run_suffix, rm_settings, wrap_reward_machine
 from rtpt import RTPT
 
-def make_env(env_id, mods=[], pixel_based=True, native_downscaling=True, eval=False, occam_mask=None, reward_machine=None):
+def make_env(env_id, mods=[], pixel_based=True, native_downscaling=True, eval=False, occam_mask=None, reward_machine=None, orca=None):
     assert mods is None or isinstance(mods, list), "mods must be None or a list of strings"
     if mods is not None and len(mods) == 0:
         mods = None
@@ -57,6 +58,9 @@ def make_env(env_id, mods=[], pixel_based=True, native_downscaling=True, eval=Fa
                 max_pooling=True,
                 clip_reward=not eval,
             )
+        elif orca is not None:
+            # ORCA: anchor-relative object matrix (raw for ORBiT, normalised and flattened for the MLP)
+            env = wrap_orca(env, orca, eval=eval)
         else:
             env = FlattenObservationWrapper(
                 NormalizeObservationWrapper(
@@ -153,7 +157,7 @@ def single_run(config: dict):
     pixel_based = config["PIXEL_BASED"]
     env_id = config["ENV_ID"]
 
-    run_name = f"{env_id}_{config['EXP_NAME']}_{'oc' + rm_run_suffix(config) if not pixel_based else 'pixel' + ('_occam-' + config['OCCAM_MASK'] if config.get('OCCAM_MASK') else '') + ('_impala' if config.get('CNN_TYPE', 'nature') == 'impala' else '')}_{config['SEED']}"
+    run_name = f"{env_id}_{config['EXP_NAME']}_{'oc' + orca_run_suffix(config) + rm_run_suffix(config) if not pixel_based else 'pixel' + ('_occam-' + config['OCCAM_MASK'] if config.get('OCCAM_MASK') else '') + ('_impala' if config.get('CNN_TYPE', 'nature') == 'impala' else '')}_{config['SEED']}"
     wandb.init(
         project=config.get("PROJECT", "jaxtari-blines"),
         entity=config.get("ENTITY", None),
@@ -174,7 +178,8 @@ def single_run(config: dict):
     num_minibatches = config["NUM_MINIBATCHES"]
     update_epochs = config["UPDATE_EPOCHS"]
 
-    env = make_env(env_id, list(config.get("TRAIN_MODS") or []), pixel_based, config.get("NATIVE_DOWNSCALING", True), False, occam_mask=config.get("OCCAM_MASK") if config["PIXEL_BASED"] else None, reward_machine=rm_settings(config))()
+    orca = orca_settings(config)
+    env = make_env(env_id, list(config.get("TRAIN_MODS") or []), pixel_based, config.get("NATIVE_DOWNSCALING", True), False, occam_mask=config.get("OCCAM_MASK") if config["PIXEL_BASED"] else None, reward_machine=rm_settings(config), orca=orca)()
     assert isinstance(env.action_space(), spaces.Discrete), "only discrete action space is supported"
     action_dim = env.action_space().n
     obs_shape = env.observation_space().shape
@@ -200,14 +205,21 @@ def single_run(config: dict):
         frac = 1.0 - (count // (num_minibatches * update_epochs)) / num_updates
         return config["LEARNING_RATE"] * frac
 
-    network = Network(cnn_type=config.get("CNN_TYPE", "nature")) if pixel_based else MLP_Network()
+    if uses_orbit(orca):
+        NetworkModel = partial(ORBiTNetwork, num_object_types=env.num_object_types, **orbit_model_kwargs(config))
+    elif pixel_based:
+        NetworkModel = partial(Network, cnn_type=config.get("CNN_TYPE", "nature"))
+    else:
+        NetworkModel = MLP_Network
+    network = NetworkModel()
     actor = Actor(action_dim=action_dim)
     critic = Critic()
 
     # same root split as dqn/c51/pqn, so env resets for a given seed match across agents
     key, init_key = jax.random.split(key, 2)
     network_key, actor_key, critic_key = jax.random.split(init_key, 3)
-    network_params = network.init(network_key, jnp.zeros((1, *obs_shape)))
+    sample_obs = jnp.zeros((1, *obs_shape))
+    network_params = init_orbit(network, network_key, sample_obs) if uses_orbit(orca) else network.init(network_key, sample_obs)
     hidden_example = network.apply(network_params, jnp.zeros((1, *obs_shape)))
     agent_state = TrainState.create(
         apply_fn=None,
@@ -381,10 +393,11 @@ def single_run(config: dict):
                     eval=True,
                     occam_mask=config.get("OCCAM_MASK") if config["PIXEL_BASED"] else None,
                     reward_machine=rm_settings(config),
+                    orca=orca,
                 ),
                 env_id,
                 eval_episodes=10,
-                Model=(partial(Network, cnn_type=config.get("CNN_TYPE", "nature")), Actor) if pixel_based else (MLP_Network, Actor),
+                Model=(NetworkModel, Actor),
                 seed=config["SEED"] + 42,  # use a different seed for evaluation
             )
             metrics[mod_label] = float(np.mean(jax.device_get(episodic_returns)))

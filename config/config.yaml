@@ -38,6 +38,20 @@ CNN_TYPE: nature
 # null = plain frames, or one of binary | object | class | planes; ignored for OC
 OCCAM_MASK: null
 
+# ORCA / ORBiT for object-centric runs, PPO and PQN only; ignored for pixel runs.
+# ORCA: an anchor-relative object matrix (one row per object slot: one-hot class, dx, dy, center x/y,
+# no frame stack) instead of the stacked object vector, normalised and flattened for the MLP.
+# ORBIT: the ORCA matrix with a transformer over the objects instead of the MLP (implies ORCA).
+ORCA: False
+ORBIT: False
+ORCA_ANCHOR: auto  # the game's ObjectObservation field positions are relative to; auto = the player (chicken, bailey, ship, skier); '' = absolute
+ORCA_INCLUDE_WH: False  # add object width and height to each row
+ORBIT_EMB_DIM: 128
+ORBIT_NUM_HEADS: 8
+ORBIT_NUM_BLOCKS: 3
+ORBIT_POOLING: mean  # mean | max | first
+ORBIT_NUM_POST_LAYERS: 0
+
 # reward machines (Toro Icarte et al., 2018) for object-centric runs: the game's RM
 # (reward_machines/) pays the reward and its state is appended to the observation;
 # evaluation still scores the game reward. RM_SHAPING adds potential-based shaping.

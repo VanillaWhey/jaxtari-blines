@@ -23,15 +23,18 @@ FROM nvcr.io/nvidia/pytorch:25.03-py3
 # uv 0.13.7 wrote uv.lock (lock format revision 5)
 COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /uvx /usr/local/bin/
 
+# Works with BuildKit and with the legacy builder (no RUN --mount); uv keeps no cache in the image.
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_PYTHON_DOWNLOADS=never \
     UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
-    PATH=/opt/venv/bin:$PATH \
-    # The image puts PyTorch's libraries first on LD_LIBRARY_PATH; JAX must load the CUDA/cuDNN from its own
-    # pip wheels, so keep only the CUDA forward-compatibility and driver folders of the image's value.
-    LD_LIBRARY_PATH=/usr/local/cuda/compat/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64 \
-    # jaxtari looks for its sprites in $XDG_DATA_HOME/jaxtari (mounted, see above)
+    UV_NO_CACHE=1 \
+    PATH=/opt/venv/bin:$PATH
+
+# The image puts PyTorch's libraries first on LD_LIBRARY_PATH; JAX must load the CUDA/cuDNN from its own
+# pip wheels, so keep only the CUDA forward-compatibility and driver folders of the image's value.
+# jaxtari looks for its sprites in $XDG_DATA_HOME/jaxtari (mounted, see above).
+ENV LD_LIBRARY_PATH=/usr/local/cuda/compat/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64 \
     XDG_DATA_HOME=/opt/data \
     JAXTARI_SKIP_SPRITE_UPDATE=1 \
     WANDB_DIR=/runs \
@@ -41,9 +44,9 @@ WORKDIR /workspace/jaxtari-blines
 
 # dependencies first, so code changes don't reinstall them
 COPY pyproject.toml uv.lock .python-version ./
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-install-project
+RUN uv sync --frozen --no-install-project
 
 COPY . .
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen \
+RUN uv sync --frozen \
     && python -c "import jax, flax, optax, hydra; print('jax', jax.__version__)" \
     && mkdir -p /opt/data/jaxtari /runs

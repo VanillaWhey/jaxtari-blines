@@ -18,6 +18,14 @@ UPLOAD_MODEL: False
 # default env
 ENV_ID: pong
 
+# AtariWrapper (environment protocol). The defaults are the DQN-style setup; Machado et al. (2018):
+# STICKY_ACTIONS=0.25 EPISODIC_LIFE=False NOOP_MAX=0. Evaluation uses the same values, except that
+# episodic life is always off there.
+STICKY_ACTIONS: 0.0
+EPISODIC_LIFE: True  # life loss ends the training episode (no reset)
+NOOP_MAX: 30  # random number of no-ops on reset, 0 = off
+FIRST_FIRE: True
+
 # choose mods to be active during training, default: None
 TRAIN_MODS: []
 # choose mods to be evaluated after training

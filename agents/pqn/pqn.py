@@ -25,28 +25,21 @@ from jaxtari.wrappers import (
     PixelObsWrapper,
 )
 from agents.pqn.pqn_eval import evaluate
-from agents.run_utils import eval_mod_configs, log_model_artifact, plan_chunks, rm_metrics
+from agents.run_utils import atari_run_suffix, atari_settings, make_atari_wrapper, eval_mod_configs, log_model_artifact, plan_chunks, rm_metrics
 from agents.networks import impala_cnn
 from agents.occam.occam import OCCAMWrapper, log_occam_comparison_video
 from agents.orbit.orbit import ORBiTQNetwork, init_orbit, orbit_model_kwargs, orca_run_suffix, orca_settings, uses_orbit, wrap_orca
 from reward_machines.rm_registry import rm_run_suffix, rm_settings, wrap_reward_machine
 
 
-def make_env(env_id, mods=None, pixel_based=True, native_downscaling=True, eval=False, occam_mask=None, reward_machine=None, orca=None):
+def make_env(env_id, mods=None, pixel_based=True, native_downscaling=True, eval=False, occam_mask=None, reward_machine=None, orca=None, atari=None):
     mods = list(mods) if mods else None
     if not eval and mods:
         print(f"[WARNING] Training on mods {mods}!")
 
     def thunk():
         env = jaxtari.make(env_id, mods=mods)
-        env = AtariWrapper(
-            env,
-            sticky_actions=0.0,
-            episodic_life=not eval,
-            first_fire=True,
-            noop_max=30,
-            full_action_space=False,
-        )
+        env = make_atari_wrapper(env, atari, eval)
         if pixel_based and occam_mask:
             # object masks instead of frames; same frame skip, pooling and stacking as PixelObsWrapper
             env = OCCAMWrapper(env, mask_mode=occam_mask, clip_reward=not eval, game_name=env_id,
@@ -141,7 +134,7 @@ def single_run(config: dict):
     config = {k.upper(): v for k, v in config.items() if k != "alg"}
     env_id = config["ENV_ID"]
     pixel_based = config["PIXEL_BASED"]
-    run_name = f"{env_id}_{config['EXP_NAME']}_{'oc' + orca_run_suffix(config) + rm_run_suffix(config) if not pixel_based else 'pixel' + ('_occam-' + config['OCCAM_MASK'] if config.get('OCCAM_MASK') else '') + ('_impala' if config.get('CNN_TYPE', 'nature') == 'impala' else '')}_{config['SEED']}"
+    run_name = f"{env_id}_{config['EXP_NAME']}_{'oc' + orca_run_suffix(config) + rm_run_suffix(config) if not pixel_based else 'pixel' + ('_occam-' + config['OCCAM_MASK'] if config.get('OCCAM_MASK') else '') + ('_impala' if config.get('CNN_TYPE', 'nature') == 'impala' else '')}{atari_run_suffix(config)}_{config['SEED']}"
 
     wandb.init(
         project=config.get("PROJECT", "jaxtari-blines"),
@@ -173,7 +166,7 @@ def single_run(config: dict):
     anneal_lr = config.get("ANNEAL_LR", True)
 
     orca = orca_settings(config)
-    env = make_env(env_id, list(config.get("TRAIN_MODS") or []), pixel_based, config.get("NATIVE_DOWNSCALING", True), occam_mask=config.get("OCCAM_MASK") if config["PIXEL_BASED"] else None, reward_machine=rm_settings(config), orca=orca)()
+    env = make_env(env_id, list(config.get("TRAIN_MODS") or []), pixel_based, config.get("NATIVE_DOWNSCALING", True), occam_mask=config.get("OCCAM_MASK") if config["PIXEL_BASED"] else None, reward_machine=rm_settings(config), orca=orca, atari=atari_settings(config))()
     action_dim = env.action_space().n
     obs_shape = env.observation_space().shape
     if pixel_based:
@@ -328,6 +321,7 @@ def single_run(config: dict):
                     occam_mask=config.get("OCCAM_MASK") if config["PIXEL_BASED"] else None,
                     reward_machine=rm_settings(config),
                     orca=orca,
+                    atari=atari_settings(config),
                 ),
                 env_id,
                 eval_episodes=10,

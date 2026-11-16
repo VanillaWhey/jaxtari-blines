@@ -20,6 +20,51 @@ def plan_chunks(total_steps: int, steps_per_update: int, scan_steps: int):
     return scan_steps, num_chunks, scan_steps * steps_per_update
 
 
+DEFAULT_ATARI = {"sticky_actions": 0.0, "episodic_life": True, "noop_max": 30, "first_fire": True}
+
+
+def atari_settings(config: dict) -> dict:
+    """AtariWrapper settings from the run config (STICKY_ACTIONS, EPISODIC_LIFE, NOOP_MAX, FIRST_FIRE)."""
+    return {
+        "sticky_actions": float(config.get("STICKY_ACTIONS", DEFAULT_ATARI["sticky_actions"])),
+        "episodic_life": bool(config.get("EPISODIC_LIFE", DEFAULT_ATARI["episodic_life"])),
+        "noop_max": int(config.get("NOOP_MAX", DEFAULT_ATARI["noop_max"])),
+        "first_fire": bool(config.get("FIRST_FIRE", DEFAULT_ATARI["first_fire"])),
+    }
+
+
+def make_atari_wrapper(env, atari: dict | None, eval: bool):
+    """AtariWrapper with the given settings (defaults: DEFAULT_ATARI); episodic life only in training."""
+    from jaxtari.wrappers import AtariWrapper
+
+    s = {**DEFAULT_ATARI, **(atari or {})}
+    return AtariWrapper(
+        env,
+        sticky_actions=s["sticky_actions"],
+        episodic_life=s["episodic_life"] and not eval,
+        first_fire=s["first_fire"],
+        noop_max=s["noop_max"],
+        full_action_space=False,
+    )
+
+
+def atari_run_suffix(config: dict) -> str:
+    """Run-name suffix for AtariWrapper settings that differ from the defaults ('' for the defaults)."""
+    s = atari_settings(config)
+    if s == {**DEFAULT_ATARI, "sticky_actions": 0.25, "episodic_life": False, "noop_max": 0}:
+        return "_machado"
+    parts = []
+    if s["sticky_actions"] != DEFAULT_ATARI["sticky_actions"]:
+        parts.append(f"sticky{s['sticky_actions']:g}")
+    if s["episodic_life"] != DEFAULT_ATARI["episodic_life"]:
+        parts.append("noepl")
+    if s["noop_max"] != DEFAULT_ATARI["noop_max"]:
+        parts.append(f"noop{s['noop_max']}")
+    if s["first_fire"] != DEFAULT_ATARI["first_fire"]:
+        parts.append("nofire")
+    return "".join("_" + p for p in parts)
+
+
 def log_model_artifact(model_path: str, run_name: str):
     """Upload a saved checkpoint to the active wandb run as a model artifact."""
     import wandb
